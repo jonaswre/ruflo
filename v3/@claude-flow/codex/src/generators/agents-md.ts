@@ -199,6 +199,14 @@ ${skillsTable}
 
 **Critical rule:** DON'T STOP after calling claude-flow commands. Coordination commands return instantly — continue immediately with the next implementation step.
 
+### Codex Subagents
+
+Ruflo MCP tools coordinate work, but they do not launch native Codex workers by themselves. \`agent_spawn\` registers a Ruflo coordination agent. When the user explicitly asks for subagents, a swarm, delegation, or parallel agent work, pair the Ruflo MCP calls with Codex native subagents:
+
+1. Call \`memory_search\`, \`swarm_init\`, and \`agent_spawn\` to create coordination records.
+2. Spawn native Codex subagents with matching roles and disjoint file/task scopes.
+3. Integrate their outputs locally, run checks, and store the pattern with \`memory_store\`.
+
 ## MCP Integration
 
 Use MCP tools for coordination, then keep coding:
@@ -347,7 +355,7 @@ npx @claude-flow/cli mcp tools
 | Tool | Purpose | Example |
 |------|---------|---------|
 | \`swarm_init\` | Initialize swarm coordination | \`swarm_init({topology: "hierarchical"})\` |
-| \`agent_spawn\` | Spawn new agents | \`agent_spawn({type: "coder", name: "dev-1"})\` |
+| \`agent_spawn\` | Register Ruflo agent roles | \`agent_spawn({agentType: "coder", agentId: "dev-1", model: "inherit"})\` |
 | \`memory_store\` | Store in AgentDB | \`memory_store({key: "pattern", value: "..."})\` |
 | \`memory_search\` | Semantic search | \`memory_search({query: "auth patterns"})\` |
 | \`task_orchestrate\` | Task coordination | \`task_orchestrate({task: "implement feature"})\` |

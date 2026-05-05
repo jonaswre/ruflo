@@ -38,7 +38,9 @@
   },
   "files": [
     "dist",
-    "templates"
+    "templates",
+    "AGENTS.md",
+    ".agents/**"
   ],
   "scripts": {
     "build": "tsc",

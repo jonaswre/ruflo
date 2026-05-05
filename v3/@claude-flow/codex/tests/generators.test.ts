@@ -650,7 +650,7 @@ describe('generateConfigToml', () => {
 
       expect(result).toContain('[mcp_servers.claude-flow]');
       expect(result).toContain('command = "npx"');
-      expect(result).toContain('args = ["-y", "@claude-flow/cli@latest"]');
+      expect(result).toContain('args = ["-y", "--package", "@claude-flow/cli@latest", "claude-flow-mcp"]');
       expect(result).toContain('enabled = true');
     });
 

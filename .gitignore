@@ -31,6 +31,7 @@
 *.db
 *.db-journal
 *.db-wal
+agentdb.rvf*
 *.egg
 *.egg-info/
 *.exe

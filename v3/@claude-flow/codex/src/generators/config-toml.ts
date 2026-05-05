@@ -161,7 +161,7 @@ export async function generateConfigToml(options: ExtendedConfigTomlOptions = {}
       lines.push(...generateMcpServer({
         name: 'claude-flow',
         command: 'npx',
-        args: ['-y', '@claude-flow/cli@latest'],
+        args: ['-y', '--package', '@claude-flow/cli@latest', 'claude-flow-mcp'],
         enabled: true,
         toolTimeout: 120,
       }));
@@ -534,7 +534,7 @@ sandbox_mode = "${sandboxMode}"
 
 [mcp_servers.claude-flow]
 command = "npx"
-args = ["-y", "@claude-flow/cli@latest"]
+args = ["-y", "--package", "@claude-flow/cli@latest", "claude-flow-mcp"]
 enabled = true
 `;
 }
@@ -567,7 +567,7 @@ request_rule = false
 
 [mcp_servers.claude-flow]
 command = "npx"
-args = ["-y", "@claude-flow/cli@latest"]
+args = ["-y", "--package", "@claude-flow/cli@latest", "claude-flow-mcp"]
 enabled = true
 tool_timeout_sec = 300
 

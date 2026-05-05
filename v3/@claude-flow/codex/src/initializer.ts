@@ -6,6 +6,7 @@
 
 import fs from 'fs-extra';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import type {
   CodexInitOptions,
   CodexInitResult,
@@ -18,9 +19,16 @@ import { generateConfigToml } from './generators/config-toml.js';
 import { DEFAULT_SKILLS_BY_TEMPLATE, AGENTS_OVERRIDE_TEMPLATE, GITIGNORE_ENTRIES, ALL_AVAILABLE_SKILLS } from './templates/index.js';
 
 /**
- * Bundled skills source directory (relative to package)
+ * Bundled skills source directories, resolved relative to this module.
+ *
+ * The package-local path is used after publishing. The repository-root path is
+ * used when running from the monorepo checkout, where the complete converted
+ * skill set lives at the project root.
  */
-const BUNDLED_SKILLS_DIR = '../../../../.agents/skills';
+const BUNDLED_SKILLS_DIRS = [
+  ['..', '.agents', 'skills'],
+  ['..', '..', '..', '..', '.agents', 'skills'],
+];
 
 /**
  * Main initializer for Codex projects
@@ -31,7 +39,7 @@ export class CodexInitializer {
   private skills: string[] = [];
   private force: boolean = false;
   private dual: boolean = false;
-  private bundledSkillsPath: string = '';
+  private bundledSkillsPaths: string[] = [];
 
   /**
    * Initialize a new Codex project
@@ -43,11 +51,7 @@ export class CodexInitializer {
     this.force = options.force ?? false;
     this.dual = options.dual ?? false;
 
-    // Resolve bundled skills path (relative to this file's location)
-    this.bundledSkillsPath = path.resolve(
-      path.dirname(new URL(import.meta.url).pathname),
-      BUNDLED_SKILLS_DIR
-    );
+    this.bundledSkillsPaths = this.resolveBundledSkillsPaths();
 
     const filesCreated: string[] = [];
     const skillsGenerated: string[] = [];
@@ -257,48 +261,74 @@ export class CodexInitializer {
    * Copy bundled skills from the package or source directory
    * Returns the list of skills copied
    */
+  private resolveBundledSkillsPaths(): string[] {
+    const moduleDir = path.dirname(fileURLToPath(import.meta.url));
+    const targetSkillsDir = path.resolve(this.projectPath, '.agents', 'skills');
+    const seen = new Set<string>();
+
+    return BUNDLED_SKILLS_DIRS
+      .map(parts => path.resolve(moduleDir, ...parts))
+      .filter(candidate => {
+        const resolved = path.resolve(candidate);
+        if (resolved === targetSkillsDir || seen.has(resolved)) {
+          return false;
+        }
+        seen.add(resolved);
+        return true;
+      });
+  }
+
   private async copyBundledSkills(): Promise<{ copied: string[]; warnings: string[] }> {
     const copied: string[] = [];
     const warnings: string[] = [];
 
-    // Check if bundled skills directory exists
-    if (!await fs.pathExists(this.bundledSkillsPath)) {
-      warnings.push(`Bundled skills directory not found: ${this.bundledSkillsPath}`);
+    const sourceDirs: string[] = [];
+    for (const candidate of this.bundledSkillsPaths) {
+      if (await fs.pathExists(candidate)) {
+        sourceDirs.push(candidate);
+      }
+    }
+
+    if (sourceDirs.length === 0) {
+      warnings.push(`Bundled skills directory not found. Checked: ${this.bundledSkillsPaths.join(', ')}`);
       return { copied, warnings };
     }
 
     const destSkillsDir = path.join(this.projectPath, '.agents', 'skills');
 
-    // Get all skill directories
-    const skillDirs = await fs.readdir(this.bundledSkillsPath, { withFileTypes: true });
+    for (const bundledSkillsPath of sourceDirs) {
+      const skillDirs = await fs.readdir(bundledSkillsPath, { withFileTypes: true });
 
-    for (const dirent of skillDirs) {
-      if (!dirent.isDirectory()) continue;
+      for (const dirent of skillDirs) {
+        if (!dirent.isDirectory()) continue;
 
-      const skillName = dirent.name;
-      const srcPath = path.join(this.bundledSkillsPath, skillName);
-      const destPath = path.join(destSkillsDir, skillName);
+        const skillName = dirent.name;
+        if (copied.includes(skillName)) continue;
 
-      // Skip if skill should be filtered (based on template)
-      // For 'full' and 'enterprise' templates, include all skills
-      const includeAll = this.template === 'full' || this.template === 'enterprise';
-      if (!includeAll && !this.skills.includes(skillName)) {
-        continue;
-      }
+        const srcPath = path.join(bundledSkillsPath, skillName);
+        const destPath = path.join(destSkillsDir, skillName);
 
-      try {
-        // Check if skill already exists and we're not forcing
-        if (!this.force && await fs.pathExists(destPath)) {
-          warnings.push(`Skill ${skillName} already exists - skipped`);
+        // Skip if skill should be filtered (based on template)
+        // For 'full' and 'enterprise' templates, include all skills
+        const includeAll = this.template === 'full' || this.template === 'enterprise';
+        if (!includeAll && !this.skills.includes(skillName)) {
           continue;
         }
 
-        // Copy the entire skill directory
-        await fs.copy(srcPath, destPath, { overwrite: this.force });
-        copied.push(skillName);
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : String(err);
-        warnings.push(`Failed to copy skill ${skillName}: ${errorMessage}`);
+        try {
+          // Check if skill already exists and we're not forcing
+          if (!this.force && await fs.pathExists(destPath)) {
+            warnings.push(`Skill ${skillName} already exists - skipped`);
+            continue;
+          }
+
+          // Copy the entire skill directory
+          await fs.copy(srcPath, destPath, { overwrite: this.force });
+          copied.push(skillName);
+        } catch (err) {
+          const errorMessage = err instanceof Error ? err.message : String(err);
+          warnings.push(`Failed to copy skill ${skillName}: ${errorMessage}`);
+        }
       }
     }
 
@@ -309,8 +339,13 @@ export class CodexInitializer {
    * Check if a skill is bundled (exists in source directory)
    */
   private async isBundledSkill(skillName: string): Promise<boolean> {
-    const skillPath = path.join(this.bundledSkillsPath, skillName);
-    return fs.pathExists(skillPath);
+    for (const bundledSkillsPath of this.bundledSkillsPaths) {
+      const skillPath = path.join(bundledSkillsPath, skillName);
+      if (await fs.pathExists(skillPath)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**

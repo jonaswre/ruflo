@@ -1,0 +1,47 @@
+{
+  "name": "ruflo-repo-codex",
+  "version": "3.6.27",
+  "description": "Ruflo Codex integration exposing agent, swarm, memory, security, performance, GitHub, and workflow skills.",
+  "author": {
+    "name": "RuvNet",
+    "email": "ruv@ruv.io",
+    "url": "https://ruv.io"
+  },
+  "homepage": "https://github.com/ruvnet/claude-flow",
+  "repository": "https://github.com/ruvnet/claude-flow",
+  "license": "MIT",
+  "keywords": [
+    "ruflo",
+    "claude-flow",
+    "codex",
+    "agents",
+    "swarm",
+    "mcp",
+    "memory",
+    "automation"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Ruflo Codex",
+    "shortDescription": "Ruflo agent orchestration skills for Codex",
+    "longDescription": "Use Ruflo skills for agent roles, swarm coordination, memory workflows, security audits, performance analysis, GitHub automation, and other agentic development patterns.",
+    "developerName": "RuvNet",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/ruvnet/claude-flow",
+    "privacyPolicyURL": "https://github.com/ruvnet/claude-flow",
+    "termsOfServiceURL": "https://github.com/ruvnet/claude-flow",
+    "defaultPrompt": [
+      "Use Ruflo skills to coordinate this development task.",
+      "Search Ruflo memory patterns before implementing.",
+      "Plan this work with a Ruflo swarm."
+    ],
+    "brandColor": "#2563EB",
+    "screenshots": []
+  }
+}

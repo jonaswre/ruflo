@@ -128,7 +128,7 @@ codex mcp add claude-flow -- npx claude-flow mcp start
 | `memory_search` | Semantic vector search | **BEFORE** starting any task |
 | `memory_store` | Save patterns with embeddings | **AFTER** completing successfully |
 | `swarm_init` | Initialize coordination | Start of complex tasks |
-| `agent_spawn` | Register agent roles | Multi-agent workflows |
+| `agent_spawn` | Register Ruflo agent roles | Multi-agent workflows |
 | `neural_train` | Train on patterns | Periodic improvement |
 
 ### Tool Parameters
@@ -161,6 +161,26 @@ codex mcp add claude-flow -- npx claude-flow mcp start
 }
 ```
 
+**agent_spawn**
+```json
+{
+  "agentType": "coder",
+  "agentId": "validator-coder",
+  "model": "inherit",
+  "task": "Implement the validator"
+}
+```
+
+### Codex Subagents vs MCP Agent Records
+
+Claude Code can spawn real subagents from its Task runtime. In Codex, Ruflo's `agent_spawn` MCP tool registers a coordination agent record; it does not launch a native Codex worker that edits files.
+
+For real parallel execution in Codex, use both layers:
+
+1. Ruflo MCP: `memory_search`, `swarm_init`, and `agent_spawn` for coordination and memory.
+2. Codex native subagents: spawn them when the user explicitly asks for subagents, a swarm, delegation, or parallel agent work.
+3. Codex main thread: integrate outputs, run checks, and call `memory_store`.
+
 </details>
 
 ---
@@ -190,7 +210,7 @@ If score > 0.7, use that pattern as reference.
 
 STEP 2 - COORDINATE (use MCP tools):
 Use tool: swarm_init with topology="hierarchical", maxAgents=3
-Use tool: agent_spawn with type="coder", name="validator"
+Use tool: agent_spawn with agentType="coder", agentId="validator"
 
 STEP 3 - EXECUTE (YOU do this - DON'T STOP HERE):
 Create /tmp/validator/email.js with validateEmail() function

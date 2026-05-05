@@ -1,0 +1,20 @@
+{
+  "name": "ruflo-repo",
+  "interface": {
+    "displayName": "Ruflo Repository"
+  },
+  "plugins": [
+    {
+      "name": "ruflo-repo-codex",
+      "source": {
+        "source": "local",
+        "path": "./plugins/ruflo-repo-codex"
+      },
+      "policy": {
+        "installation": "INSTALLED_BY_DEFAULT",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Coding"
+    }
+  ]
+}

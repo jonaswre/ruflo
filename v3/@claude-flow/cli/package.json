@@ -2,7 +2,7 @@
   "name": "@claude-flow/cli",
   "version": "3.6.27",
   "type": "module",
-  "description": "Ruflo CLI - Enterprise AI agent orchestration with 60+ specialized agents, swarm coordination, MCP server, self-learning hooks, and vector memory for Claude Code",
+  "description": "Ruflo CLI - Enterprise AI agent orchestration with 60+ specialized agents, swarm coordination, MCP server, self-learning hooks, and vector memory for Claude Code and OpenAI Codex",
   "main": "dist/src/index.js",
   "types": "dist/src/index.d.ts",
   "sideEffects": false,
@@ -23,6 +23,9 @@
   "keywords": [
     "claude",
     "claude-code",
+    "codex",
+    "openai",
+    "openai-codex",
     "anthropic",
     "ai-agents",
     "multi-agent",
@@ -78,6 +81,8 @@
     "bin",
     "scripts",
     ".claude",
+    "AGENTS.md",
+    ".agents",
     "README.md"
   ],
   "scripts": {
@@ -103,7 +108,7 @@
   },
   "optionalDependencies": {
     "@claude-flow/aidefence": "^3.0.2",
-    "@claude-flow/codex": "^3.0.0-alpha.8",
+    "@claude-flow/codex": "^3.0.0-alpha.9",
     "@claude-flow/embeddings": "^3.0.0-alpha.12",
     "@claude-flow/guidance": "^3.0.0-alpha.1",
     "@claude-flow/memory": "^3.0.0-alpha.12",

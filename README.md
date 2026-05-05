@@ -9,14 +9,15 @@
 [![Star on GitHub](https://img.shields.io/github/stars/ruvnet/claude-flow?style=for-the-badge&logo=github&color=gold)](https://github.com/ruvnet/claude-flow)
 [![MIT License](https://img.shields.io/badge/License-MIT-yellow?style=for-the-badge)](https://opensource.org/licenses/MIT)
 [![Claude Code](https://img.shields.io/badge/Claude%20Code-Plugin-green?style=for-the-badge&logo=anthropic)](https://github.com/ruvnet/claude-flow)
+[![OpenAI Codex](https://img.shields.io/badge/OpenAI%20Codex-Plugin-blue?style=for-the-badge&logo=openai)](https://github.com/ruvnet/claude-flow)
 
 # Ruflo
 
-**Multi-agent AI orchestration for Claude Code**
+**Multi-agent AI orchestration for Claude Code and OpenAI Codex**
 
 </div>
 
-Orchestrate 100+ specialized AI agents across machines, teams, and trust boundaries. Ruflo adds coordinated swarms, self-learning memory, federated comms, and enterprise security to Claude Code — so agents don't just run, they collaborate.
+Orchestrate 100+ specialized AI agents across machines, teams, and trust boundaries. Ruflo adds coordinated swarms, self-learning memory, federated comms, and enterprise security to Claude Code and OpenAI Codex — so agents don't just run, they collaborate.
 
 ### Why Ruflo?
 
@@ -25,7 +26,7 @@ Orchestrate 100+ specialized AI agents across machines, teams, and trust boundar
 
 ### What Ruflo Does
 
-One `init` gives Claude Code a nervous system: agents self-organize into swarms, learn from every task, remember across sessions, and — with federation — securely talk to agents on other machines without leaking data. You keep writing code. Ruflo handles the coordination.
+One `init` gives Claude Code or Codex a nervous system: agents self-organize into swarms, learn from every task, remember across sessions, and — with federation — securely talk to agents on other machines without leaking data. You keep writing code. Ruflo handles the coordination.
 
 ```
 Self-Learning / Self-Optimizing Agent Architecture
@@ -35,7 +36,7 @@ User --> Ruflo (CLI/MCP) --> Router --> Swarm --> Agents --> Memory --> LLM Prov
                           +---- Learning Loop <-------+
 ```
 
-> **New to Ruflo?** You don't need to learn 314 MCP tools or 26 CLI commands. After `init`, just use Claude Code normally -- the hooks system automatically routes tasks, learns from successful patterns, and coordinates agents in the background.
+> **New to Ruflo?** You don't need to learn 314 MCP tools or 26 CLI commands. After `init`, use Claude Code or Codex normally -- Claude Code hooks and Codex MCP integration route tasks, learn from successful patterns, and coordinate agents in the background.
 
 ---
 
@@ -43,7 +44,7 @@ User --> Ruflo (CLI/MCP) --> Router --> Swarm --> Agents --> Memory --> LLM Prov
 
 ## Quick Start
 
-### Claude Code Plugin (Recommended)
+### Claude Code Plugin
 
 Install Ruflo as a native Claude Code plugin -- adds skills, commands, agents, and MCP tools directly:
 
@@ -57,6 +58,93 @@ Install Ruflo as a native Claude Code plugin -- adds skills, commands, agents, a
 /plugin install ruflo-autopilot@ruflo
 /plugin install ruflo-federation@ruflo
 ```
+
+### OpenAI Codex CLI
+
+Ruflo supports Codex with the same agent skills, project instructions, and Claude Flow MCP coordination used by Claude Code. The execution model is:
+
+| Component | Role |
+|-----------|------|
+| **Codex** | Writes code, edits files, runs commands, and executes tests |
+| **Claude Flow / Ruflo** | Tracks coordination, stores memory, exposes MCP tools, and loads skills |
+
+In Claude Code, Ruflo can use the Claude Code Task/subagent runtime. In Codex, Ruflo MCP calls such as `agent_spawn` register coordination agents; they do not launch native Codex workers by themselves. For real parallel execution in Codex, use Ruflo MCP for memory/coordination and Codex native subagents for execution when the user explicitly asks for subagents, a swarm, delegation, or parallel agent work.
+
+For a new project, initialize Codex support with the adapter:
+
+```bash
+# Codex-only setup
+npx claude-flow@alpha init --codex
+
+# Full Codex setup with all skills
+npx claude-flow@alpha init --codex --full
+
+# Dual setup for Claude Code and Codex
+npx claude-flow@alpha init --dual
+```
+
+For local development in this repository, Codex support is already checked in:
+
+| File or directory | Purpose |
+|-------------------|---------|
+| `AGENTS.md` | Project instructions loaded by Codex |
+| `.agents/skills/` | Shared Ruflo skills for Codex and Claude Code |
+| `.agents/config.toml` | Ruflo MCP configuration |
+| `.agents/plugins/marketplace.json` | Local Codex marketplace metadata |
+| `plugins/ruflo-repo-codex/` | Repo-local Codex plugin bundle |
+
+Register the local marketplace and MCP server:
+
+```bash
+cd /path/to/ruflo
+
+# Register this checkout as a Codex plugin marketplace
+codex plugin marketplace add "$PWD"
+
+# Add MCP if it is not already present
+codex mcp add claude-flow -- npx -y --package @claude-flow/cli@latest claude-flow-mcp
+```
+
+Enable the repo plugin in `~/.codex/config.toml`:
+
+```toml
+[plugins."ruflo-repo-codex@ruflo-repo"]
+enabled = true
+
+[marketplaces.ruflo-repo]
+source_type = "local"
+source = "/path/to/ruflo"
+```
+
+Verify the setup with Codex itself:
+
+```bash
+# MCP should show claude-flow as enabled
+codex mcp list
+
+# Prompt input should include AGENTS.md, project skills, and the Ruflo Codex plugin
+codex debug prompt-input | rg "AGENTS.md instructions|Ruflo Codex|ruflo-repo-codex"
+```
+
+Expected signals:
+
+```text
+Ruflo Codex
+ruflo-repo-codex:<skill-name>
+AGENTS.md instructions for /path/to/ruflo
+claude-flow ... enabled
+```
+
+If the marketplace is registered but `Ruflo Codex` does not appear in `codex debug prompt-input`, seed the local Codex plugin cache and verify again:
+
+```bash
+version=$(node -p "require('./plugins/ruflo-repo-codex/.codex-plugin/plugin.json').version")
+mkdir -p "$HOME/.codex/plugins/cache/ruflo-repo/ruflo-repo-codex/$version"
+cp -a plugins/ruflo-repo-codex/. "$HOME/.codex/plugins/cache/ruflo-repo/ruflo-repo-codex/$version/"
+codex debug prompt-input | rg "Ruflo Codex|ruflo-repo-codex"
+```
+
+See [`v3/@claude-flow/codex/README.md`](v3/@claude-flow/codex/README.md) for the full Codex adapter workflow and self-learning MCP pattern.
 
 <details>
 <summary><strong>All 32 plugins</strong></summary>

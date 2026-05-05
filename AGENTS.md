@@ -507,9 +507,33 @@ Once added, Codex can use these tools via MCP:
 |------|---------|
 | `swarm_init` | Initialize swarm (topology, maxAgents) |
 | `swarm_status` | Check swarm state |
-| `agent_spawn` | Register agent roles |
+| `agent_spawn` | Register agent roles in Ruflo's coordination ledger |
 | `agent_status` | Check agent state |
 | `task_orchestrate` | Coordinate multi-agent tasks |
+
+### Codex Subagents vs Ruflo MCP Agents
+
+Ruflo on Claude Code can spawn real Claude Code subagents because Claude Code exposes its Task/subagent runtime to the orchestration flow.
+
+In Codex, `agent_spawn` is an MCP coordination call. It registers a Ruflo agent record and selects a role/model, but it does **not** launch a native Codex worker that edits files.
+
+For real Codex parallel work:
+1. Use `memory_search`, `swarm_init`, and `agent_spawn` to create the Ruflo coordination record.
+2. When the user explicitly asks for a swarm, subagents, delegation, or parallel agent work, spawn Codex native subagents with matching roles.
+3. Give each native Codex subagent a disjoint task/file scope.
+4. Integrate their results locally and store the successful pattern with `memory_store`.
+
+Use the MCP schema exactly:
+```json
+{
+  "agentType": "coder",
+  "agentId": "coder-1",
+  "model": "inherit",
+  "task": "Implement the API changes"
+}
+```
+
+Do **not** use Claude-style arguments such as `type` or `name` with MCP `agent_spawn`.
 
 **Learning & Memory (USE THESE!):**
 | Tool | Purpose | When |
@@ -553,9 +577,10 @@ Use tool: memory_store
    → If score > 0.7, USE that pattern
 
 2. COORDINATE: swarm_init(topology="hierarchical")
-   → agent_spawn(type="coder", name="worker-1")
+   → agent_spawn(agentType="coder", agentId="worker-1")
 
-3. EXECUTE: YOU write the code, run commands, create files
+3. EXECUTE: Codex writes the code, runs commands, creates files
+   → If the user explicitly requested subagents/parallel work, spawn native Codex subagents for execution
 
 4. REMEMBER: memory_store(key="pattern-x", value="what worked", namespace="patterns")
 ```
