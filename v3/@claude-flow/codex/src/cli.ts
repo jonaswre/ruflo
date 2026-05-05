@@ -16,6 +16,42 @@ import { generateSkillMd } from './generators/skill-md.js';
 import { VERSION, PACKAGE_INFO } from './index.js';
 import fs from 'fs-extra';
 import path from 'path';
+import { spawn } from 'child_process';
+
+/**
+ * Probe a CLI binary on PATH and return the first line of its output, or null
+ * if missing/broken. Defaults to `--version`; pass custom args (e.g.
+ * `['login','status']`) to probe other read-only subcommands.
+ */
+function probeBinary(command: string, timeoutMs = 3000, args: string[] = ['--version']): Promise<string | null> {
+  return new Promise((resolve) => {
+    let stdout = '';
+    let stderr = '';
+    let settled = false;
+    const proc = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      proc.kill('SIGTERM');
+      resolve(null);
+    }, timeoutMs);
+    proc.stdout?.on('data', (d) => { stdout += d.toString(); });
+    proc.stderr?.on('data', (d) => { stderr += d.toString(); });
+    proc.on('close', (code) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      const out = (stdout || stderr).trim().split('\n')[0]?.trim() ?? '';
+      resolve(code === 0 && out.length > 0 ? out : null);
+    });
+    proc.on('error', () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      resolve(null);
+    });
+  });
+}
 
 const program = new Command();
 
@@ -624,12 +660,20 @@ program
         checks.push({ name: 'Node.js', status: 'fail', message: `${nodeVersion} (>= 18 required)` });
       }
 
-      // Check for AGENTS.md in current directory
+      // Check for AGENTS.md (Codex project instructions) in current directory
       const agentsMdExists = await fs.pathExists(path.join(process.cwd(), 'AGENTS.md'));
       if (agentsMdExists) {
-        checks.push({ name: 'AGENTS.md', status: 'pass', message: 'Found in current directory' });
+        checks.push({ name: 'AGENTS.md', status: 'pass', message: 'Found in current directory (read by codex workers)' });
       } else {
-        checks.push({ name: 'AGENTS.md', status: 'warn', message: 'Not found - run init to create' });
+        checks.push({ name: 'AGENTS.md', status: 'warn', message: 'Not found - codex workers will have no project guidance. Run `init --codex` or `init --dual` to create.' });
+      }
+
+      // Check for CLAUDE.md (Claude Code project instructions) — needed by claude workers in dual-mode
+      const claudeMdExists = await fs.pathExists(path.join(process.cwd(), 'CLAUDE.md'));
+      if (claudeMdExists) {
+        checks.push({ name: 'CLAUDE.md', status: 'pass', message: 'Found in current directory (read by claude workers)' });
+      } else {
+        checks.push({ name: 'CLAUDE.md', status: 'warn', message: 'Not found - claude workers will have no project guidance. Run `init --dual` to create alongside AGENTS.md.' });
       }
 
       // Check for .agents directory
@@ -658,6 +702,56 @@ program
         }
       } catch {
         checks.push({ name: 'Git', status: 'warn', message: 'Cannot check' });
+      }
+
+      // Check Claude Code CLI (used by dual-mode for 'claude' workers)
+      const claudeVersion = await probeBinary('claude');
+      if (claudeVersion) {
+        checks.push({ name: 'Claude Code CLI', status: 'pass', message: claudeVersion });
+      } else {
+        checks.push({
+          name: 'Claude Code CLI',
+          status: 'warn',
+          message: 'Not found on PATH - install: https://docs.anthropic.com/claude/docs/claude-code (required for dual-mode "claude" workers)',
+        });
+      }
+
+      // Check OpenAI Codex CLI (used by dual-mode for 'codex' workers)
+      const codexVersion = await probeBinary('codex');
+      if (codexVersion) {
+        checks.push({ name: 'OpenAI Codex CLI', status: 'pass', message: codexVersion });
+      } else {
+        checks.push({
+          name: 'OpenAI Codex CLI',
+          status: 'warn',
+          message: 'Not found on PATH - install: https://github.com/openai/codex#install (required for dual-mode "codex" workers)',
+        });
+      }
+
+      // Auth: Anthropic — claude reads ANTHROPIC_API_KEY or uses OAuth via `claude login`.
+      // We can't probe OAuth without invoking claude (slow); env var is the cheap baseline.
+      if (process.env.ANTHROPIC_API_KEY) {
+        checks.push({ name: 'Claude auth', status: 'pass', message: 'ANTHROPIC_API_KEY set in env' });
+      } else {
+        checks.push({
+          name: 'Claude auth',
+          status: 'warn',
+          message: 'ANTHROPIC_API_KEY not set. OK if you use OAuth (`claude login`); otherwise claude workers will fail at runtime.',
+        });
+      }
+
+      // Auth: OpenAI Codex — `codex login status` exits 0 when authenticated.
+      if (codexVersion) {
+        const loggedIn = await probeBinary('codex', 5000, ['login', 'status']);
+        if (loggedIn) {
+          checks.push({ name: 'Codex auth', status: 'pass', message: loggedIn });
+        } else {
+          checks.push({
+            name: 'Codex auth',
+            status: 'warn',
+            message: 'Not logged in. Run `codex login` (or set OPENAI_API_KEY); otherwise codex workers will fail.',
+          });
+        }
       }
 
       // Print results

@@ -634,7 +634,14 @@ Both platforms share the same `.claude-flow/` runtime:
 
 ### CLI Commands (NEW in v3.0.0-alpha.8)
 
-The `@claude-flow/codex` package now includes built-in dual-mode orchestration:
+The `@claude-flow/codex` package now includes built-in dual-mode orchestration.
+
+**Prerequisites:** Both CLIs must be on `PATH`:
+
+- `claude` — [Claude Code](https://docs.anthropic.com/claude/docs/claude-code) (for 🔵 workers)
+- `codex` — [OpenAI Codex CLI](https://github.com/openai/codex#install) (for 🟢 workers)
+
+Run `npx claude-flow-codex doctor` to verify both are installed. Override binary paths with `--claude-command <bin>` / `--codex-command <bin>` on `dual run`.
 
 ```bash
 # List available collaboration templates
@@ -672,6 +679,9 @@ const orchestrator = new DualModeOrchestrator({
   maxConcurrent: 4,
   sharedNamespace: 'collaboration',
   timeout: 300000,
+  // Override binary paths if not on PATH or you want a fork:
+  // claudeCommand: '/usr/local/bin/claude',
+  // codexCommand: '/opt/codex/bin/codex',
 });
 
 // Listen to events
@@ -686,6 +696,84 @@ console.log(`Success: ${result.success}`);
 console.log(`Duration: ${result.totalDuration}ms`);
 console.log(`Workers: ${result.workers.length}`);
 ```
+
+### WorkerConfig Reference
+
+Each worker in a collaboration accepts these fields:
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `id` | `string` | required | Unique per swarm; used as memory key prefix and for `dependsOn` references |
+| `platform` | `'claude' \| 'codex'` | required | Determines which CLI is spawned |
+| `role` | `string` | required | Display label (e.g. `architect`, `coder`) |
+| `prompt` | `string` | required | Task prompt; wrapped with collaboration protocol before spawning |
+| `model` | `string` | inherits | `--model` flag forwarded to both CLIs |
+| `maxTurns` | `number` | unlimited | **Claude only** — codex `exec` has no equivalent (warns and drops) |
+| `dependsOn` | `string[]` | `[]` | Worker IDs that must complete before this one starts |
+| `sandbox` | `'read-only' \| 'workspace-write' \| 'danger-full-access'` | `workspace-write` | **Codex only** |
+| `network` | `boolean` | `true` | **Codex only.** Codex's `workspace-write` defaults to network-disabled, which breaks `npx claude-flow memory ...` calls. We default to `true`; set `false` to isolate. |
+| `allowedTools` | `string[]` | all | **Claude only** — forwarded as `--allowedTools "A,B,C"`. Codex equivalent (`--enable feature`) not yet wired |
+| `disallowedTools` | `string[]` | none | **Claude only** — same as above |
+| `cwd` | `string` | `projectPath` | Per-worker working directory override |
+| `addDirs` | `string[]` | none | Extra writable dirs (claude variadic, codex repeated `--add-dir`) |
+| `resumeSessionId` | `string` | none | **Claude only** — forwards `--resume <id> --fork-session`. Codex resume has a different argv shape and is not yet supported |
+
+Example with overrides:
+
+```typescript
+const workers: WorkerConfig[] = [
+  {
+    id: 'scanner',
+    platform: 'codex',
+    role: 'security-scanner',
+    prompt: 'Scan src/auth/ for OWASP Top 10 issues.',
+    sandbox: 'read-only',     // scanner shouldn't write
+    network: false,            // pure local analysis
+    addDirs: ['src/auth'],
+    model: 'gpt-5-codex',
+  },
+  {
+    id: 'fixer',
+    platform: 'codex',
+    role: 'security-fixer',
+    prompt: 'Patch the issues scanner found.',
+    dependsOn: ['scanner'],
+    sandbox: 'workspace-write', // can write
+    network: true,              // may need to fetch deps (default)
+  },
+];
+```
+
+### Behavior Notes
+
+- **Codex network access**: When `sandbox: 'workspace-write'` (the default), the orchestrator injects `-c sandbox_workspace_write.network_access=true` so the worker can call back into the shared-memory CLI. Set `network: false` to enforce isolation.
+- **Stdin fallback**: Prompts larger than 64 KB are streamed via stdin (claude: `-p` with no value; codex: `-`) to avoid `ARG_MAX` truncation on Linux.
+- **Exit-code strictness**: A worker is only considered successful on `exit code === 0`. Partial stdout from a crashed process is no longer treated as success — the failure is surfaced with the captured stderr.
+- **Friendly preflight errors**: If `claude` or `codex` is missing from `PATH`, the worker fails immediately with an install-URL hint (no raw `ENOENT` traces).
+
+### Limitations
+
+These are intentional gaps; the orchestrator does **not** silently work around them:
+
+| Limitation | Reason | Workaround |
+|---|---|---|
+| `maxTurns` not enforced for codex | `codex exec` has no turn cap | Use `DualModeConfig.timeout` (wall-clock) |
+| No budget cap for codex | Codex CLI has no `--max-budget-usd` | Track via OpenAI dashboard |
+| `allowedTools` ignored on codex | Codex uses `--enable/--disable feature`, different shape | Restrict via `~/.codex/config.toml` |
+| `resumeSessionId` ignored on codex | `codex exec resume <id>` uses a different argv path | Use `codex exec resume` directly |
+| Output is raw text, not structured | Codex `--json` and claude `--output-format json` not yet plumbed | Parse `WorkerResult.output` manually |
+
+### CLI Overrides
+
+The `dual run` command accepts:
+
+```bash
+npx claude-flow-codex dual run --template feature --task "..." \
+  --claude-command /usr/local/bin/claude \
+  --codex-command /opt/codex/bin/codex
+```
+
+Use these when the binaries aren't on `PATH` or you want to point at a fork.
 
 </details>
 

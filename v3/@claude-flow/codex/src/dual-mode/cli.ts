@@ -38,6 +38,8 @@ function createRunCommand(): Command {
     .option('--max-concurrent <n>', 'Maximum concurrent workers', '4')
     .option('--timeout <ms>', 'Worker timeout in milliseconds', '300000')
     .option('--namespace <name>', 'Shared memory namespace', 'collaboration')
+    .option('--claude-command <bin>', 'Path to Claude Code binary (default: "claude" on PATH)')
+    .option('--codex-command <bin>', 'Path to OpenAI Codex binary (default: "codex" on PATH)')
     .action(async (options) => {
       console.log(chalk.cyan('═══════════════════════════════════════════════════════════════'));
       console.log(chalk.cyan.bold('  DUAL-MODE COLLABORATIVE EXECUTION'));
@@ -50,6 +52,8 @@ function createRunCommand(): Command {
         maxConcurrent: parseInt(options.maxConcurrent, 10),
         timeout: parseInt(options.timeout, 10),
         sharedNamespace: options.namespace,
+        ...(options.claudeCommand ? { claudeCommand: options.claudeCommand } : {}),
+        ...(options.codexCommand ? { codexCommand: options.codexCommand } : {}),
       };
 
       const orchestrator = new DualModeOrchestrator(config);
@@ -133,6 +137,8 @@ function createTemplateCommand(): Command {
     .description('List available collaboration templates')
     .action(() => {
       console.log(chalk.bold('\nAvailable Collaboration Templates:\n'));
+      console.log(chalk.gray('  Workers spawn the real `claude` and `codex` CLIs (must be on PATH).'));
+      console.log(chalk.gray('  Override via --claude-command / --codex-command on `dual run`.\n'));
 
       console.log(chalk.cyan('feature') + ' - Feature Development Swarm');
       console.log('  Pipeline: architect → coder → tester → reviewer');

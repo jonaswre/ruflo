@@ -231,19 +231,35 @@ Level 3: [🟢 Optimizer]           # Depends on Reviewer approval
 import { DualModeOrchestrator, CollaborationTemplates } from '@claude-flow/codex';
 
 const orchestrator = new DualModeOrchestrator({
-  namespace: 'my-feature',
-  memoryBackend: 'hybrid'
+  projectPath: process.cwd(),
+  sharedNamespace: 'my-feature',
+  maxConcurrent: 4,
+  timeout: 300_000,
+  // Optional binary overrides (defaults: 'claude' / 'codex' on PATH):
+  // claudeCommand: '/usr/local/bin/claude',
+  // codexCommand: '/opt/codex/bin/codex',
 });
 
 // Use pre-built template
 const workers = CollaborationTemplates.featureDevelopment('Add OAuth login');
 
 // Run collaboration
-const results = await orchestrator.runCollaboration(workers, 'Implement OAuth feature');
+const result = await orchestrator.runCollaboration(workers, 'Implement OAuth feature');
 
-// Access shared memory
-const designDocs = await orchestrator.getMemory('design-decisions');
+console.log(result.success, result.totalDuration, result.workers);
 ```
+
+Per-worker overrides on `WorkerConfig` (see `@claude-flow/codex` README for the full table):
+
+| Field | Platform | Purpose |
+|---|---|---|
+| `sandbox` | codex | `read-only` / `workspace-write` (default) / `danger-full-access` |
+| `network` | codex | `true` (default) — enables network in workspace-write so the memory CLI works |
+| `allowedTools` / `disallowedTools` | claude | Forwarded to `--allowedTools` / `--disallowedTools` |
+| `cwd` / `addDirs` | both | Per-worker working dir + extra writable dirs |
+| `resumeSessionId` | claude | Resume + fork an existing claude session |
+
+**Prerequisites**: both `claude` and `codex` must be on `PATH`. Verify with `npx claude-flow-codex doctor` (also checks auth and project instruction files).
 
 ---
 

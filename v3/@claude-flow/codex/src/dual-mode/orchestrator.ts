@@ -8,6 +8,8 @@ import { EventEmitter } from 'events';
 import * as path from 'path';
 import * as fs from 'fs';
 
+export type SandboxMode = 'read-only' | 'workspace-write' | 'danger-full-access';
+
 export interface WorkerConfig {
   id: string;
   platform: 'claude' | 'codex';
@@ -17,6 +19,40 @@ export interface WorkerConfig {
   maxTurns?: number;
   timeout?: number;
   dependsOn?: string[];
+
+  /**
+   * Sandbox mode for codex workers. Ignored for claude (which has no equivalent
+   * flag in print mode). Default: 'workspace-write'.
+   */
+  sandbox?: SandboxMode;
+
+  /**
+   * Whether the worker may make network calls. Codex defaults workspace-write
+   * to network-disabled, which breaks the `npx claude-flow memory ...` calls
+   * the collaboration protocol relies on. We default to `true` so the memory
+   * protocol works; set to `false` to enforce isolation.
+   * Has no effect for claude (no equivalent print-mode flag).
+   */
+  network?: boolean;
+
+  /** Tools the worker is allowed to use. Forwarded to claude's --allowedTools.
+   *  Not natively supported by codex exec — emits a warning and is ignored. */
+  allowedTools?: string[];
+
+  /** Tools the worker is denied. Forwarded to claude's --disallowedTools.
+   *  Not natively supported by codex exec — emits a warning and is ignored. */
+  disallowedTools?: string[];
+
+  /** Per-worker working directory. Overrides DualModeConfig.projectPath. */
+  cwd?: string;
+
+  /** Additional directories the worker may write to.
+   *  claude: --add-dir A B  /  codex: --add-dir A --add-dir B (repeatable). */
+  addDirs?: string[];
+
+  /** Resume an existing claude session by UUID. Codex resume has a different
+   *  argv shape and is not yet supported here. */
+  resumeSessionId?: string;
 }
 
 export interface WorkerResult {
@@ -64,8 +100,62 @@ export class DualModeOrchestrator extends EventEmitter {
       sharedNamespace: config.sharedNamespace ?? 'collaboration',
       timeout: config.timeout ?? 300000, // 5 minutes
       claudeCommand: config.claudeCommand ?? 'claude',
-      codexCommand: config.codexCommand ?? 'claude', // Both use claude CLI
+      codexCommand: config.codexCommand ?? 'codex',
     };
+  }
+
+  /**
+   * Cache of preflight checks: command -> resolved | rejected error
+   */
+  private preflightCache: Map<string, Promise<void>> = new Map();
+
+  /**
+   * Verify a CLI binary exists on PATH. Throws a friendly, actionable error
+   * if missing. Result is cached per-command for the lifetime of the orchestrator.
+   */
+  private preflightBinary(command: string): Promise<void> {
+    const cached = this.preflightCache.get(command);
+    if (cached) return cached;
+
+    const probe = new Promise<void>((resolve, reject) => {
+      const isWin = process.platform === 'win32';
+      const proc = spawn(
+        isWin ? 'where' : 'sh',
+        isWin ? [command] : ['-c', `command -v ${command}`],
+        { stdio: ['ignore', 'pipe', 'pipe'] }
+      );
+      let stdout = '';
+      proc.stdout?.on('data', (d) => { stdout += d.toString(); });
+      proc.on('close', (code) => {
+        if (code === 0 && stdout.trim().length > 0) {
+          resolve();
+        } else {
+          reject(this.binaryMissingError(command));
+        }
+      });
+      proc.on('error', () => reject(this.binaryMissingError(command)));
+    });
+
+    this.preflightCache.set(command, probe);
+    return probe;
+  }
+
+  private binaryMissingError(command: string): Error {
+    if (command === 'codex' || command === this.config.codexCommand) {
+      return new Error(
+        `Codex CLI not found on PATH (looked for "${command}"). ` +
+        `Install it from https://github.com/openai/codex#install ` +
+        `— or pass codexCommand in DualModeConfig / --codex-command on the CLI.`
+      );
+    }
+    if (command === 'claude' || command === this.config.claudeCommand) {
+      return new Error(
+        `Claude Code CLI not found on PATH (looked for "${command}"). ` +
+        `Install it from https://docs.anthropic.com/claude/docs/claude-code ` +
+        `— or pass claudeCommand in DualModeConfig / --claude-command on the CLI.`
+      );
+    }
+    return new Error(`CLI binary not found on PATH: "${command}".`);
   }
 
   /**
@@ -123,7 +213,7 @@ export class DualModeOrchestrator extends EventEmitter {
       result.status = 'completed';
       result.output = output;
       result.completedAt = new Date();
-      this.emit('worker:completed', { id: config.id, output: output.slice(0, 200) });
+      this.emit('worker:completed', { id: config.id, output: output.slice(0, 1024) });
     } catch (error) {
       result.status = 'failed';
       result.error = error instanceof Error ? error.message : String(error);
@@ -133,39 +223,44 @@ export class DualModeOrchestrator extends EventEmitter {
   }
 
   /**
+   * Threshold above which we pipe the prompt via stdin instead of argv.
+   * ARG_MAX is 128KB on Linux, ~256KB on macOS — leave headroom for other args.
+   */
+  static readonly STDIN_THRESHOLD_BYTES = 64 * 1024;
+
+  /**
    * Execute a headless Claude/Codex instance
    */
   private async executeHeadless(config: WorkerConfig): Promise<string> {
-    const { projectPath, timeout } = this.config;
+    const { timeout } = this.config;
     const command = config.platform === 'claude' ? this.config.claudeCommand : this.config.codexCommand;
+    const cwd = config.cwd ?? this.config.projectPath;
+
+    // Verify the binary is on PATH before spawning; surfaces a friendly error.
+    await this.preflightBinary(command);
 
     // Build the prompt with memory integration
     const enhancedPrompt = this.buildCollaborativePrompt(config);
-
-    const args = [
-      '-p', enhancedPrompt,
-      '--output-format', 'text',
-    ];
-
-    if (config.maxTurns) {
-      args.push('--max-turns', String(config.maxTurns));
-    }
-
-    if (config.model) {
-      args.push('--model', config.model);
-    }
+    const useStdin = Buffer.byteLength(enhancedPrompt, 'utf8') > DualModeOrchestrator.STDIN_THRESHOLD_BYTES;
+    const args = this.buildArgs(config, enhancedPrompt, useStdin);
 
     return new Promise((resolve, reject) => {
       let output = '';
       let errorOutput = '';
 
       const proc = spawn(command, args, {
-        cwd: projectPath,
+        cwd,
         env: { ...process.env, FORCE_COLOR: '0' },
         stdio: ['pipe', 'pipe', 'pipe'],
       });
 
       this.processes.set(config.id, proc);
+
+      // Pipe oversized prompts via stdin to avoid ARG_MAX truncation.
+      if (useStdin) {
+        proc.stdin?.write(enhancedPrompt);
+      }
+      proc.stdin?.end();
 
       proc.stdout?.on('data', (data) => {
         output += data.toString();
@@ -184,10 +279,13 @@ export class DualModeOrchestrator extends EventEmitter {
         clearTimeout(timer);
         this.processes.delete(config.id);
 
-        if (code === 0 || output.length > 0) {
-          resolve(output || errorOutput);
+        // Tightened: accept only on clean exit. Partial stdout from a crashed
+        // process can look like success; surface the failure instead.
+        if (code === 0) {
+          resolve(output);
         } else {
-          reject(new Error(`Worker ${config.id} exited with code ${code}: ${errorOutput}`));
+          const detail = errorOutput.trim() || output.trim().slice(0, 500) || '(no output captured)';
+          reject(new Error(`Worker ${config.id} exited with code ${code}: ${detail}`));
         }
       });
 
@@ -200,15 +298,94 @@ export class DualModeOrchestrator extends EventEmitter {
   }
 
   /**
+   * Build per-platform argv for the headless worker process.
+   *
+   * Claude Code: `claude -p [<prompt>] --output-format text [--max-turns N] [--model X] ...`
+   * OpenAI Codex: `codex exec [<prompt>|-] --ask-for-approval never --sandbox <mode> ...`
+   *
+   * When `useStdin` is true the prompt is omitted from argv (claude reads stdin
+   * after `-p`; codex reads stdin when the prompt argument is `-`).
+   */
+  private maxTurnsWarned = false;
+  private codexToolsWarned = false;
+  buildArgs(config: WorkerConfig, enhancedPrompt: string, useStdin = false): string[] {
+    if (config.platform === 'codex') {
+      if (config.maxTurns && !this.maxTurnsWarned) {
+        console.warn(
+          `[dual-mode] maxTurns is not supported by 'codex exec' and will be ignored for codex workers.`
+        );
+        this.maxTurnsWarned = true;
+      }
+      if ((config.allowedTools?.length || config.disallowedTools?.length) && !this.codexToolsWarned) {
+        console.warn(
+          `[dual-mode] allowedTools/disallowedTools are not supported by 'codex exec' and will be ignored for codex workers. ` +
+          `Use --enable/--disable feature flags via WorkerConfig in a future version, or restrict via codex config.toml.`
+        );
+        this.codexToolsWarned = true;
+      }
+      if (config.resumeSessionId) {
+        console.warn(
+          `[dual-mode] resumeSessionId is not yet supported for codex workers (different argv shape). Ignoring for "${config.id}".`
+        );
+      }
+
+      const sandbox: SandboxMode = config.sandbox ?? 'workspace-write';
+      const args: string[] = ['exec', useStdin ? '-' : enhancedPrompt];
+      args.push('--ask-for-approval', 'never');
+      args.push('--sandbox', sandbox);
+
+      // Codex defaults workspace-write to network-disabled; the collaboration
+      // protocol's `npx claude-flow ... memory ...` calls need network. Default
+      // to enabling it; let WorkerConfig.network=false opt out.
+      if (sandbox === 'workspace-write') {
+        const network = config.network !== false;
+        args.push('-c', `sandbox_workspace_write.network_access=${network}`);
+      }
+
+      if (config.model) args.push('--model', config.model);
+      if (config.addDirs?.length) {
+        for (const d of config.addDirs) args.push('--add-dir', d);
+      }
+      return args;
+    }
+
+    // Claude Code
+    if (config.sandbox || config.network !== undefined) {
+      // Quietly informational: these don't map to claude print-mode flags.
+      // No-op; documented in the WorkerConfig field comments.
+    }
+    const args: string[] = ['-p'];
+    if (!useStdin) args.push(enhancedPrompt);
+    args.push('--output-format', 'text');
+    if (config.maxTurns) args.push('--max-turns', String(config.maxTurns));
+    if (config.model) args.push('--model', config.model);
+    if (config.allowedTools?.length) {
+      args.push('--allowedTools', config.allowedTools.join(','));
+    }
+    if (config.disallowedTools?.length) {
+      args.push('--disallowedTools', config.disallowedTools.join(','));
+    }
+    if (config.addDirs?.length) {
+      args.push('--add-dir', ...config.addDirs);
+    }
+    if (config.resumeSessionId) {
+      args.push('--resume', config.resumeSessionId, '--fork-session');
+    }
+    return args;
+  }
+
+  /**
    * Build a prompt that includes memory coordination instructions
    */
   private buildCollaborativePrompt(config: WorkerConfig): string {
     const { sharedNamespace, projectPath } = this.config;
+    const instructionFile = config.platform === 'codex' ? 'AGENTS.md' : 'CLAUDE.md';
 
     return `You are a ${config.role.toUpperCase()} agent in a collaborative dual-mode swarm.
 Platform: ${config.platform === 'claude' ? 'Claude Code' : 'OpenAI Codex'}
 Working Directory: ${projectPath}
 Shared Memory Namespace: ${sharedNamespace}
+Project Instructions: read ${instructionFile} in the working directory for project-level guidance.
 
 COLLABORATION PROTOCOL:
 1. Search shared memory for context: npx claude-flow@alpha memory search --query "<relevant terms>" --namespace ${sharedNamespace}
